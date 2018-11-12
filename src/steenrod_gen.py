@@ -127,7 +127,7 @@ def GenProductsSingletonLHS(max_grade):
                           and j = rhs.leading_square
                          join steenrod_products
                            on i + j - k = lhs_grade                          
-                          and length(lhs_trailing_squares) = 0
+                          and lhs_trailing_squares = ''
                           and ((k = 0 and rhs_squares = rhs.trailing_squares)
                                or (rhs_leading_square = k
                                    and rhs_trailing_squares = rhs.trailing_squares))
@@ -139,11 +139,50 @@ def GenProductsSingletonLHS(max_grade):
                          "prod_grade" : grade,
                          "leading_square_min" : square / 2})
             con.query(query)
+
+def GenProductsExtendLHSOnce(lhs_length):
+    con = joyo_utils.ConnectToMemSQL("127.0.0.1:10000", database="ext_sql")
+    con.query("delete from steenrod_products where length(lhs_squares) / 2 >= %d" % lhs_length)
+    query = ("""insert into steenrod_products
+                 (lhs_id, lhs_squares, lhs_grade,
+                  rhs_id, rhs_squares, rhs_grade,
+                  prod_id, prod_squares)
+                 select 
+                     lhs.id as lhs_id,
+                     lhs.squares as lhs_squares,
+                     lhs.grade as lhs_grade,
+                     pre_product.rhs_id as rhs_id,
+                     pre_product.rhs_squares as rhs_squares,
+                     pre_product.rhs_grade as rhs_grade,
+                     final_product.prod_id as prod_id,
+                     final_product.prod_squares as prod_squares
+                 from serre_cartan_elts lhs
+                 join steenrod_products pre_product
+                   on pre_product.lhs_squares = lhs.trailing_squares
+                 join steenrod_products final_product
+                   on final_product.lhs_leading_square = lhs.leading_square
+                  and final_product.lhs_trailing_squares = ''
+                  and final_product.rhs_id = pre_product.prod_id
+                 where length(lhs.squares) = 2 * %(lhs_length)d
+                 group by lhs.id, pre_product.rhs_id, final_product.prod_id
+                 having count(*) %% 2 = 1"""
+              % {"lhs_length" : lhs_length})
+    return con.query(query)
+    
+    
+def GenProductsExtendLHS(starting_length=2):    
+    while True:
+        print "Extending LHS to lenght %d" % starting_length
+        result = GenProductsExtendLHSOnce(starting_length)
+        starting_length += 1
+        if result == 0:
+            break
             
 def GenAll(max_grade):
     GenSerreCartanBasis(max_grade)
     GenBinomial(max_grade)
     GenProductsSingletonLHS(max_grade)
+    GenProductsExtendLHS()
      
 def MultToy(sq1, sq2):
     con = joyo_utils.ConnectToMemSQL("127.0.0.1:10000", database="ext_sql")

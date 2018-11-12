@@ -1,4 +1,4 @@
-create database if not exists ext_sql;
+create database if not exists ext_sql partitions 8;
 use ext_sql;
 
 create table if not exists serre_cartan_elts
