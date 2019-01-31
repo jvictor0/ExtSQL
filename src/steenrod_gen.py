@@ -1,4 +1,4 @@
-from memsql import joyo_utils
+from util import *
 import math
 
 def TwoByteHex(num):
@@ -24,7 +24,7 @@ def InsertEltsInGrade(con, grade):
               % {"grade": grade, "max_grade": 2 * grade / 3 - 1})
     
 def GenSerreCartanBasis(max_grade, start_grade=1):
-    con = joyo_utils.ConnectToMemSQL("127.0.0.1:10000", database="ext_sql")
+    con = ConnectToMemSQL()
     con.query("delete from serre_cartan_elts where grade >= %d" % start_grade)
     for i in xrange(start_grade, max_grade + 1):
         print "generating basis in grade = %d" % (i)
@@ -39,7 +39,7 @@ def Choose(n,k):
     return a / (b * c)    
         
 def GenBinomial(max_grade):
-    con = joyo_utils.ConnectToMemSQL("127.0.0.1:10000", database="ext_sql")
+    con = ConnectToMemSQL()
     con.query("delete from nonzero_binomial_coefs")
     print "generating binomial coefs"
     for j in xrange(1, max_grade + 1):
@@ -52,7 +52,7 @@ def GenBinomial(max_grade):
             con.query("insert into nonzero_binomial_coefs(i,j,k) values " + ",".join([str(t) for t in rows]))
 
 def GenProductsSingletonLHS(max_grade):
-    con = joyo_utils.ConnectToMemSQL("127.0.0.1:10000", database="ext_sql")
+    con = ConnectToMemSQL()
     con.query("delete from steenrod_products")
 
     # Grab all ring generators (that is, products of length one) from the serre cartan table
@@ -141,7 +141,7 @@ def GenProductsSingletonLHS(max_grade):
             con.query(query)
 
 def GenProductsExtendLHSOnce(lhs_length):
-    con = joyo_utils.ConnectToMemSQL("127.0.0.1:10000", database="ext_sql")
+    con = ConnectToMemSQL()
     con.query("delete from steenrod_products where length(lhs_squares) / 2 >= %d" % lhs_length)
     query = ("""insert into steenrod_products
                  (lhs_id, lhs_squares, lhs_grade,
@@ -185,7 +185,7 @@ def GenAll(max_grade):
     GenProductsExtendLHS()
      
 def MultToy(sq1, sq2):
-    con = joyo_utils.ConnectToMemSQL("127.0.0.1:10000", database="ext_sql")
+    con = ConnectToMemSQL()
     rows = con.query("""select *
                         from steenrod_products
                         where lhs_squares = concat(%s) and rhs_squares = concat(%s)"""

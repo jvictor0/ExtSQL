@@ -1,4 +1,3 @@
-from memsql import joyo_utils
 from util import *
 
 def CreateTableQuery(namespace):
@@ -46,7 +45,7 @@ def NewVectorsQuery(namespace, itr):
                     select
                          coalesce(matrix.col_ix, pivots.target_col_ix) as col_ix,
                          coalesce(matrix.row_ix, pivots.row_ix) as row_ix,
-                         min(coalesce(matrix.row_ix, pivots.row_ix)) over (partition by matrix.col_ix) as leading_ix,
+                         min(coalesce(matrix.row_ix, pivots.row_ix)) over (partition by coalesce(matrix.col_ix, pivots.target_col_ix)) as leading_ix,
                          %(itr)s + 1 as iteration
                     from
                     (%(pivots)s) pivots
@@ -63,28 +62,38 @@ def NewVectorsQuery(namespace, itr):
                   
 def DoIteration(con, namespace, itr):
     if con is None:
-        con = joyo_utils.ConnectToMemSQL("127.0.0.1:10000", database="ext_sql")
+        con = ConnectToMemSQL()
     con.query("insert into %(ns)s_matrix\n%(new_vectors)s" % {"ns":namespace, "new_vectors":NewVectorsQuery(namespace, itr)})
 
 
-def Triangularize(con, namespace):
+def Triangularize(con, namespace, delete_old_iters=True):
     if con is None:
-        con = joyo_utils.ConnectToMemSQL("127.0.0.1:10000", database="ext_sql")
+        con = ConnectToMemSQL()
     con.query("delete from %(ns)s_matrix where iteration > 0" % {"ns":namespace})
     iteration = 0
     need_to_continue = True
     while need_to_continue:
         DoIteration(con, namespace, iteration)
+        SanityCheck(con, namespace)
         iteration += 1
         rows = con.query("select leading_ix, count(distinct leading_ix, col_ix) c from %(ns)s_matrix where iteration = %(itr)s group by leading_ix" % {"ns":namespace, "itr":iteration})
         need_to_continue = False
         for r in rows:
             if int(r["c"]) > 1:
                 need_to_continue = True
+    if delete_old_iters:
+        con.query("delete from %(ns)s_matrix where iteration < %(iteration)s" % {
+            "ns" : namespace,
+            "iteration" : iteration
+        })
 
+def SanityCheck(con, namespace):
+    assert len(con.query("select * from %(ns)s_matrix group by iteration, row_ix, col_ix having count(*) > 1" % {"ns" : namespace})) == 0
+    assert len(con.query("select col_ix, iteration, count(distinct leading_ix) from %(ns)s_matrix group by 1,2 having count(distinct leading_ix) > 1" % {"ns" : namespace})) == 0
+        
 def ListsToDb(con, namespace, lists):
     if con is None:
-        con = joyo_utils.ConnectToMemSQL("127.0.0.1:10000", database="ext_sql")
+        con = ConnectToMemSQL()
     con.query(CreateTableQuery(namespace))
     con.query("delete from %(ns)s_matrix" % {"ns":namespace})
     lts = {}
@@ -97,16 +106,16 @@ def ListsToDb(con, namespace, lists):
 
 def DbToLists(con, namespace, itr=0):
     if con is None:
-        con = joyo_utils.ConnectToMemSQL("127.0.0.1:10000", database="ext_sql")
+        con = ConnectToMemSQL()
     pre_result = {}
     for r in con.query("select * from %(ns)s_matrix where iteration = %(itr)s" % {'ns':namespace, "itr":itr}):
         pre_result[(int(r["col_ix"]), int(r["row_ix"]))] = 1
-    num_rows = max([a for a,b in pre_result.keys()]) + 1
-    num_cols = max([b for a,b in pre_result.keys()]) + 1
+    row_list = sorted(list(set([a for a,b in pre_result.keys()])))
+    col_list = sorted(list(set([b for a,b in pre_result.keys()])))
     result = []
-    for col_ix in xrange(num_cols):
+    for col_ix in col_list:
         result.append([])
-        for row_ix in xrange(num_rows):
+        for row_ix in row_list:
             if (row_ix, col_ix) in pre_result:
                 result[-1].append(1)
             else:
@@ -114,5 +123,5 @@ def DbToLists(con, namespace, itr=0):
     return result
 
 def PrintLists(result):
-    print "\n".join([str(r) for r in result])
+    print "\n".join([" ".join(r) for r in result])
     
