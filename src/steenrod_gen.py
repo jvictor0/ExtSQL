@@ -140,6 +140,45 @@ def GenProductsSingletonLHS(max_grade):
                          "leading_square_min" : square / 2})
             con.query(query)
 
+            # Annoyingly, the rhs may be a product...
+            #
+            query = ("""insert into steenrod_products
+                         (lhs_id, lhs_squares, lhs_grade,
+                          rhs_id, rhs_squares, rhs_grade,
+                          prod_id, prod_squares)
+                         select
+                             %(square_id)d as lhs_id,
+                             number_to_two_byte_blob(%(square)d) as lhs_squares,
+                             %(square)d as lhs_grade,
+                             rhs.id as rhs_id,
+                             rhs.squares as rhs_squares,
+                             rhs.grade as rhs_grade,
+                             steenrod_products.prod_id as prod_id,
+                             steenrod_products.prod_squares as prod_squares
+                         from serre_cartan_elts rhs
+                         join nonzero_binomial_coefs
+                           on i = %(square)d
+                          and j = rhs.leading_square
+                         join steenrod_products rhs_product
+                           on rhs_product.lhs_leading_square = k
+                          and rhs_product.lhs_trailing_squares = ''
+                          and rhs_product.rhs_squares = rhs.trailing_squares
+                          and rhs_product.prod_squares != concat(rhs_product.lhs_squares, rhs_product.rhs_squares)
+                         join steenrod_products
+                           on i + j - k = steenrod_products.lhs_grade                          
+                          and steenrod_products.lhs_trailing_squares = ''
+                          and steenrod_products.rhs_id = rhs_product.prod_id
+                         where rhs.leading_square > %(leading_square_min)d
+                           and rhs.grade = %(rhs_grade)d"""
+                      % {"square_id" : ring_generators[square],
+                         "square" : square,
+                         "rhs_grade" : grade - square,
+                         "prod_grade" : grade,
+                         "leading_square_min" : square / 2})
+            con.query(query)
+
+            
+            
 def GenProductsExtendLHSOnce(lhs_length):
     con = ConnectToMemSQL()
     con.query("delete from steenrod_products where length(lhs_squares) / 2 >= %d" % lhs_length)
