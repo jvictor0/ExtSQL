@@ -141,17 +141,11 @@ def GenerateNewGenerators(con, grade, dimension):
 def E2ASSIteration(con, grade, dimension):
     Log("Doing iteration %d, %d" % (grade, dimension))
     PopulateResolutionMatrix(con, grade, dimension)
-    print con.query("select count(distinct col_ix) as vec_size from resolution_matrix").format_table()
     triangularize.Triangularize(con, "resolution")
-    print con.query("select count(distinct col_ix) as vec_size_post from resolution_matrix").format_table()    
-    print con.query("select count(distinct col_ix) as cyc_size_pre, count(distinct row_ix) from cycles_matrix").format_table()    
     PopulateCyclesMatrixImage(con, dimension)
-    print con.query("select count(distinct col_ix) as cyc_size, count(distinct row_ix) from cycles_matrix").format_table()
     triangularize.Triangularize(con, "cycles")
-    print con.query("select count(distinct col_ix) as cyc_size_post, count(distinct row_ix) from cycles_matrix").format_table()
     GenerateNewGenerators(con, grade, dimension)
     PopulateCyclesMatrixKernel(con, dimension)
-    print con.query("select count(distinct col_ix) as kern_size, count(distinct row_ix) from cycles_matrix").format_table()
     
 def ClearTables(con):
     con.query("delete from resolution_ids")
@@ -185,6 +179,7 @@ def E2ASSGrade(con, grade):
 def E2ASS(max_grade):
     con = ConnectToMemSQL()
     PopulateDimensionZeroGenerator(con)
+    steenrod_gen.GenForGrade(con, 1)    
     for grade in xrange(1, max_grade):
         E2ASSGrade(con, grade)
 

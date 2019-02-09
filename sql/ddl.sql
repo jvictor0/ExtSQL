@@ -8,8 +8,8 @@ create table if not exists serre_cartan_elts
     grade bigint unsigned not null,
     leading_square as (ascii(squares) << 8) | ascii(substring(squares, 2, 1)) persisted bigint unsigned,
     trailing_squares as substring(squares, 3) persisted blob,
-    key(squares, id) using clustered columnstore,
-    shard(squares)
+    key(grade, id) using clustered columnstore,
+    shard(id)
 );
 
 delimiter //
@@ -28,6 +28,8 @@ create table if not exists nonzero_binomial_coefs
     i int not null,
     j int not null,
     k int not null,
+    i_plus_j_minus_k_square bigint not null,
+    k_square bigint not null,
     primary key(i,j,k)
 );
 
@@ -51,10 +53,12 @@ create table if not exists steenrod_products
     prod_squares blob not null,
     prod_grade as lhs_grade + rhs_grade persisted bigint unsigned,    
     prod_leading_square as (ascii(prod_squares) << 8) | ascii(substring(prod_squares, 2, 1)) persisted bigint unsigned,
-    prod_trailing_squares as substring(prod_squares, 3) persisted blob,  
+    prod_trailing_squares as substring(prod_squares, 3) persisted blob,
 
-    key (rhs_id, lhs_id, prod_id) using clustered columnstore,
-    shard(rhs_id)
+    is_trivial as prod_squares = concat(lhs_squares, rhs_squares) persisted tinyint,
+
+    key (lhs_grade, rhs_grade, lhs_id, rhs_id, prod_id) using clustered columnstore,
+    shard(lhs_id)
 );
 
 create table if not exists resolution_ids

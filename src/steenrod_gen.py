@@ -1,5 +1,6 @@
 from util import *
 import math
+import time
 
 def TwoByteHex(num):
     if num < 256:
@@ -40,12 +41,17 @@ def GenBinomial(con, j):
     con.query("delete from nonzero_binomial_coefs where j >= %d" % j)
     print "generating binomial coefs"
     rows = []
+
+    ring_generators = {int(r["leading_square"]) : int(r["id"])
+                       for r in con.query("select leading_square, id from serre_cartan_elts where length(squares) = 2")}
+    ring_generators[0] = 0
+
     for i in xrange(1, 2 * j):
         for k in xrange(i / 2 + 1):
             if Choose(j - k - 1, i - 2 * k) % 2 == 1:
-                rows.append((i,j,k))
+                rows.append((i,j,k, ring_generators[i+j-k], ring_generators[k]))
     if len(rows) > 0:
-        con.query("insert into nonzero_binomial_coefs(i,j,k) values " + ",".join([str(t) for t in rows]))
+        con.query("insert into nonzero_binomial_coefs(i,j,k,i_plus_j_minus_k_square,k_square) values " + ",".join([str(t) for t in rows]))
 
 def GenProductsSingletonLHS(con, grade):
     con.query("delete from steenrod_products where prod_grade >= %d" % grade)
@@ -86,7 +92,7 @@ def GenProductsSingletonLHS(con, grade):
                      "rhs_grade" : grade - square,
                      "prod_grade" : grade,
                      "leading_square_min" : square / 2})
-         # Insert the product of two primitive squares being primitive
+        # Insert the product of two primitive squares being primitive
         #
         if Choose(grade - square - 1, square) % 2 == 1:
             con.query("""insert into steenrod_products 
@@ -120,10 +126,11 @@ def GenProductsSingletonLHS(con, grade):
                        on i = %(square)d
                       and j = rhs.leading_square
                      join steenrod_products
-                       on i + j - k = lhs_grade                          
-                      and lhs_trailing_squares = ''
-                      and ((k = 0 and rhs_squares = rhs.trailing_squares)
-                           or (rhs_leading_square = k
+                       on i + j - k = steenrod_products.lhs_grade
+                      and i_plus_j_minus_k_square = steenrod_products.lhs_id
+                      and %(prod_grade)d - (i + j - k) = steenrod_products.rhs_grade
+                      and ((k = 0 and steenrod_products.rhs_squares = rhs.trailing_squares)
+                           or (steenrod_products.rhs_leading_square = k
                                and rhs_trailing_squares = rhs.trailing_squares))
                      where rhs.leading_square > %(leading_square_min)d
                        and rhs.grade = %(rhs_grade)d"""
@@ -133,7 +140,7 @@ def GenProductsSingletonLHS(con, grade):
                      "prod_grade" : grade,
                      "leading_square_min" : square / 2})
         con.query(query)
-         # Annoyingly, the rhs may be a product...
+        # Annoyingly, the rhs may be a product...
         #
         query = ("""insert into steenrod_products
                      (lhs_id, lhs_squares, lhs_grade,
@@ -153,13 +160,14 @@ def GenProductsSingletonLHS(con, grade):
                        on i = %(square)d
                       and j = rhs.leading_square
                      join steenrod_products rhs_product
-                       on rhs_product.lhs_leading_square = k
-                      and rhs_product.lhs_trailing_squares = ''
+                       on rhs_product.lhs_grade = k
+                      and rhs_product.lhs_id = k_square
+                      and rhs_grade = rhs.grade - rhs.leading_square
                       and rhs_product.rhs_squares = rhs.trailing_squares
-                      and rhs_product.prod_squares != concat(rhs_product.lhs_squares, rhs_product.rhs_squares)
+                      and not rhs_product.is_trivial
                      join steenrod_products
                        on i + j - k = steenrod_products.lhs_grade                          
-                      and steenrod_products.lhs_trailing_squares = ''
+                      and i_plus_j_minus_k_square = steenrod_products.lhs_id
                       and steenrod_products.rhs_id = rhs_product.prod_id
                      where rhs.leading_square > %(leading_square_min)d
                        and rhs.grade = %(rhs_grade)d"""
@@ -215,13 +223,13 @@ def GenProductsExtendLHS(con, grade):
 # Thus we need to generate twice as many singleton products so we can generate the longer products
 #
 def GenForGrade(con, grade):
-        GenSerreCartanBasis(con, 2 * grade - 1)
-        GenSerreCartanBasis(con, 2 * grade)
-        GenBinomial(con, 2 * grade - 1)
-        GenBinomial(con, 2 * grade)
-        GenProductsSingletonLHS(con, 2 * grade - 1)
-        GenProductsSingletonLHS(con, 2 * grade)
-        GenProductsExtendLHS(con, grade)
+    for i in xrange(4):
+        GenSerreCartanBasis(con, 4 * grade - 3 + i)
+    GenBinomial(con, 2 * grade - 1)
+    GenBinomial(con, 2 * grade)
+    GenProductsSingletonLHS(con, 2 * grade - 1)
+    GenProductsSingletonLHS(con, 2 * grade)
+    GenProductsExtendLHS(con, grade)
         
 def GenAll(max_grade):
     con = ConnectToMemSQL()
