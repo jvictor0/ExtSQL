@@ -63,9 +63,6 @@ def GenProductsSingletonLHS(con, grade):
 
     
     print "generating multiplication table in grade %d" % grade
-    # The assumtion here is that all products with higher degree LHS have already been computed.
-    # This way, the Adem relations will give us things we've already computed so we can just look them up rather than recursing
-    #
     # Generate all trivial products, that is, all products that are obviously Serre-Cartan
     #
     query = ("""insert into steenrod_products 
@@ -84,7 +81,8 @@ def GenProductsSingletonLHS(con, grade):
                   from serre_cartan_elts lhs
                   join serre_cartan_elts rhs 
                   join serre_cartan_elts prod
-                  on concat(lhs.squares, rhs.squares) = prod.squares
+                    on lhs.squares = prod.leading_square
+                   and rhs.squares = prod.trailing_squares
                   where lhs.grade < %(grade)d
                     and lhs.trailing_squares = ''                        
                     and rhs.grade = %(grade)d - lhs.grade
@@ -93,7 +91,7 @@ def GenProductsSingletonLHS(con, grade):
               % {"grade" : grade})
     t0 = time.time()
     con.query(query)
-    print "   query 4 took %f secs" % (time.time() - t0)
+    print "   query 1 took %f secs" % (time.time() - t0)
 
     for square in xrange(grade - 1, 0, -1):
         # Insert the product of two primitive squares being primitive
@@ -145,7 +143,7 @@ def GenProductsSingletonLHS(con, grade):
               % {"grade" : grade})
     t0 = time.time()
     con.query(query)
-    print "   query 4 took %f secs" % (time.time() - t0)
+    print "   query 3 took %f secs" % (time.time() - t0)
 
     # Annoyingly, the rhs may be a product...
     #
@@ -183,7 +181,7 @@ def GenProductsSingletonLHS(con, grade):
                    and rhs.grade = %(grade)d - lhs.grade"""
               % {"grade" : grade})
     t0 = time.time()
-    con.query(query)
+    print con.query(query)
     print "   query 4 took %f secs" % (time.time() - t0)
          
             
@@ -231,6 +229,8 @@ def GenProductsExtendLHS(con, grade):
 # Thus we need to generate twice as many singleton products so we can generate the longer products
 #
 def GenForGrade(con, grade):
+    con.query("analyze table serre_cartan_elts")
+    con.query("analyze table steenrod_products")
     for i in xrange(4):
         GenSerreCartanBasis(con, 4 * grade - 3 + i)
     GenBinomial(con, 2 * grade - 1)
