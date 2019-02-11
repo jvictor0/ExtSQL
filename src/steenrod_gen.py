@@ -66,32 +66,36 @@ def GenProductsSingletonLHS(con, grade):
     # The assumtion here is that all products with higher degree LHS have already been computed.
     # This way, the Adem relations will give us things we've already computed so we can just look them up rather than recursing
     #
+    # Generate all trivial products, that is, all products that are obviously Serre-Cartan
+    #
+    query = ("""insert into steenrod_products 
+                 (lhs_id, lhs_squares, lhs_grade,
+                  rhs_id, rhs_squares, rhs_grade,
+                  prod_id, prod_squares)
+                  select 
+                      lhs.id as lhs_id,
+                      lhs.squares as lhs_squares,
+                      lhs.grade as lhs_grade,
+                      rhs.id as rhs_id,
+                      rhs.squares as rhs_squares,
+                      rhs.grade as rhs_grade,
+                      prod.id as prod_id,
+                      prod.squares as prod_squares
+                  from serre_cartan_elts lhs
+                  join serre_cartan_elts rhs 
+                  join serre_cartan_elts prod
+                  on concat(lhs.squares, rhs.squares) = prod.squares
+                  where lhs.grade < %(grade)d
+                    and lhs.trailing_squares = ''                        
+                    and rhs.grade = %(grade)d - lhs.grade
+                    and prod.grade = %(grade)d
+                    and rhs.leading_square <= floor(lhs.grade / 2)"""
+              % {"grade" : grade})
+    t0 = time.time()
+    con.query(query)
+    print "   query 4 took %f secs" % (time.time() - t0)
+
     for square in xrange(grade - 1, 0, -1):
-        # Generate all trivial products, that is, all products that are obviously Serre-Cartan
-        #
-        con.query("""insert into steenrod_products 
-                     (lhs_id, lhs_squares, lhs_grade,
-                      rhs_id, rhs_squares, rhs_grade,
-                      prod_id, prod_squares)
-                      select 
-                          %(square_id)d as lhs_id,
-                          number_to_two_byte_blob(%(square)d) as lhs_squares,
-                          %(square)d as lhs_grade,
-                          rhs.id as rhs_id,
-                          rhs.squares as rhs_squares,
-                          rhs.grade as rhs_grade,
-                          prod.id as prod_id,
-                          prod.squares as prod_squares
-                      from serre_cartan_elts rhs join serre_cartan_elts prod
-                      on concat(number_to_two_byte_blob(%(square)d), rhs.squares) = prod.squares
-                      where rhs.grade = %(rhs_grade)d
-                        and prod.grade = %(prod_grade)d
-                        and rhs.leading_square <= %(leading_square_min)d"""
-                  % {"square_id" : ring_generators[square],
-                     "square" : square,
-                     "rhs_grade" : grade - square,
-                     "prod_grade" : grade,
-                     "leading_square_min" : square / 2})
         # Insert the product of two primitive squares being primitive
         #
         if Choose(grade - square - 1, square) % 2 == 1:
@@ -106,77 +110,81 @@ def GenProductsSingletonLHS(con, grade):
                       % (ring_generators[square], square, square,
                          ring_generators[grade - square], grade - square, grade - square,
                          ring_generators[grade], grade))
-        # Use the Adem relations to fill in the rest
-        #
-        query = ("""insert into steenrod_products
-                     (lhs_id, lhs_squares, lhs_grade,
-                      rhs_id, rhs_squares, rhs_grade,
-                      prod_id, prod_squares)
-                     select
-                         %(square_id)d as lhs_id,
-                         number_to_two_byte_blob(%(square)d) as lhs_squares,
-                         %(square)d as lhs_grade,
-                         rhs.id as rhs_id,
-                         rhs.squares as rhs_squares,
-                         rhs.grade as rhs_grade,
-                         steenrod_products.prod_id as prod_id,
-                         steenrod_products.prod_squares as prod_squares
-                     from serre_cartan_elts rhs
-                     join nonzero_binomial_coefs
-                       on i = %(square)d
-                      and j = rhs.leading_square
-                     join steenrod_products
-                       on i + j - k = steenrod_products.lhs_grade
-                      and i_plus_j_minus_k_square = steenrod_products.lhs_id
-                      and %(prod_grade)d - (i + j - k) = steenrod_products.rhs_grade
-                      and ((k = 0 and steenrod_products.rhs_squares = rhs.trailing_squares)
-                           or (steenrod_products.rhs_leading_square = k
-                               and rhs_trailing_squares = rhs.trailing_squares))
-                     where rhs.leading_square > %(leading_square_min)d
-                       and rhs.grade = %(rhs_grade)d"""
-                  % {"square_id" : ring_generators[square],
-                     "square" : square,
-                     "rhs_grade" : grade - square,
-                     "prod_grade" : grade,
-                     "leading_square_min" : square / 2})
-        con.query(query)
-        # Annoyingly, the rhs may be a product...
-        #
-        query = ("""insert into steenrod_products
-                     (lhs_id, lhs_squares, lhs_grade,
-                      rhs_id, rhs_squares, rhs_grade,
-                      prod_id, prod_squares)
-                     select
-                         %(square_id)d as lhs_id,
-                         number_to_two_byte_blob(%(square)d) as lhs_squares,
-                         %(square)d as lhs_grade,
-                         rhs.id as rhs_id,
-                         rhs.squares as rhs_squares,
-                         rhs.grade as rhs_grade,
-                         steenrod_products.prod_id as prod_id,
-                         steenrod_products.prod_squares as prod_squares
-                     from serre_cartan_elts rhs
-                     join nonzero_binomial_coefs
-                       on i = %(square)d
-                      and j = rhs.leading_square
-                     join steenrod_products rhs_product
-                       on rhs_product.lhs_grade = k
-                      and rhs_product.lhs_id = k_square
-                      and rhs_grade = rhs.grade - rhs.leading_square
-                      and rhs_product.rhs_squares = rhs.trailing_squares
-                      and not rhs_product.is_trivial
-                     join steenrod_products
-                       on i + j - k = steenrod_products.lhs_grade                          
-                      and i_plus_j_minus_k_square = steenrod_products.lhs_id
-                      and steenrod_products.rhs_id = rhs_product.prod_id
-                     where rhs.leading_square > %(leading_square_min)d
-                       and rhs.grade = %(rhs_grade)d"""
-                  % {"square_id" : ring_generators[square],
-                     "square" : square,
-                     "rhs_grade" : grade - square,
-                     "prod_grade" : grade,
-                     "leading_square_min" : square / 2})
-        con.query(query)
+
+    # Use the Adem relations to fill in the rest
+    #
+    query = ("""insert into steenrod_products
+                 (lhs_id, lhs_squares, lhs_grade,
+                  rhs_id, rhs_squares, rhs_grade,
+                  prod_id, prod_squares)
+                 select
+                     lhs.id as lhs_id,
+                     lhs.squares as lhs_squares,
+                     lhs.grade as lhs_grade,
+                     rhs.id as rhs_id,
+                     rhs.squares as rhs_squares,
+                     rhs.grade as rhs_grade,
+                     steenrod_products.prod_id as prod_id,
+                     steenrod_products.prod_squares as prod_squares
+                 from serre_cartan_elts lhs
+                 join serre_cartan_elts rhs
+                 join nonzero_binomial_coefs
+                   on i = lhs.grade
+                  and j = rhs.leading_square
+                 join steenrod_products
+                   on i + j - k = steenrod_products.lhs_grade
+                  and i_plus_j_minus_k_square = steenrod_products.lhs_id
+                  and %(grade)d - (i + j - k) = steenrod_products.rhs_grade
+                  and ((k = 0 and steenrod_products.rhs_squares = rhs.trailing_squares)
+                       or (steenrod_products.rhs_leading_square = k
+                           and rhs_trailing_squares = rhs.trailing_squares))
+                 where lhs.trailing_squares = ''
+                   and lhs.grade < %(grade)d
+                   and rhs.leading_square > floor(lhs.grade / 2)
+                   and rhs.grade = %(grade)d - lhs.grade"""
+              % {"grade" : grade})
+    t0 = time.time()
+    con.query(query)
+    print "   query 4 took %f secs" % (time.time() - t0)
+
+    # Annoyingly, the rhs may be a product...
+    #
+    query = ("""insert into steenrod_products
+                 (lhs_id, lhs_squares, lhs_grade,
+                  rhs_id, rhs_squares, rhs_grade,
+                  prod_id, prod_squares)
+                 select
+                     lhs.id as lhs_id,
+                     lhs.squares as lhs_squares,
+                     lhs.grade as lhs_grade,
+                     rhs.id as rhs_id,
+                     rhs.squares as rhs_squares,
+                     rhs.grade as rhs_grade,
+                     steenrod_products.prod_id as prod_id,
+                     steenrod_products.prod_squares as prod_squares
+                 from serre_cartan_elts lhs
+                 join serre_cartan_elts rhs
+                 join nonzero_binomial_coefs
+                   on i = lhs.grade
+                  and j = rhs.leading_square
+                 join steenrod_products rhs_product
+                   on rhs_product.lhs_grade = k
+                  and rhs_product.lhs_id = k_square
+                  and rhs_grade = rhs.grade - rhs.leading_square
+                  and rhs_product.rhs_squares = rhs.trailing_squares
+                  and not rhs_product.is_trivial
+                 join steenrod_products
+                   on i + j - k = steenrod_products.lhs_grade                          
+                  and i_plus_j_minus_k_square = steenrod_products.lhs_id
+                  and steenrod_products.rhs_id = rhs_product.prod_id
+                 where lhs.trailing_squares = ''
+                   and lhs.grade < %(grade)d
+                   and rhs.leading_square > floor(lhs.grade / 2)
+                   and rhs.grade = %(grade)d - lhs.grade"""
+              % {"grade" : grade})
+    t0 = time.time()
+    con.query(query)
+    print "   query 4 took %f secs" % (time.time() - t0)
          
             
 def GenProductsExtendLHSOnce(con, lhs_length, grade):
