@@ -81,7 +81,7 @@ def GenProductsSingletonLHS(con, grade):
                   from serre_cartan_elts lhs
                   join serre_cartan_elts rhs 
                   join serre_cartan_elts prod
-                    on lhs.squares = prod.leading_square
+                    on lhs.leading_square = prod.leading_square
                    and rhs.squares = prod.trailing_squares
                   where lhs.grade < %(grade)d
                     and lhs.trailing_squares = ''                        
@@ -91,24 +91,21 @@ def GenProductsSingletonLHS(con, grade):
               % {"grade" : grade})
     t0 = time.time()
     con.query(query)
-    print "   query 1 took %f secs" % (time.time() - t0)
 
-    for square in xrange(grade - 1, 0, -1):
+    values = []
+    for square in xrange(1, grade):
         # Insert the product of two primitive squares being primitive
         #
         if Choose(grade - square - 1, square) % 2 == 1:
-            con.query("""insert into steenrod_products 
-                     (lhs_id, lhs_squares, lhs_grade,
-                      rhs_id, rhs_squares, rhs_grade,
-                      prod_id, prod_squares)
-                      values 
-                      (%d, number_to_two_byte_blob(%d), %d,
-                       %d, number_to_two_byte_blob(%d), %d,
-                       %d, number_to_two_byte_blob(%d))"""
-                      % (ring_generators[square], square, square,
-                         ring_generators[grade - square], grade - square, grade - square,
-                         ring_generators[grade], grade))
-
+            values.append("""(%d, number_to_two_byte_blob(%d), %d,
+                              %d, number_to_two_byte_blob(%d), %d,
+                              %d, number_to_two_byte_blob(%d))"""
+                          % (ring_generators[square], square, square,
+                             ring_generators[grade - square], grade - square, grade - square,
+                             ring_generators[grade], grade))
+    if len(values) > 0:
+        con.query("insert into steenrod_products values " + ",".join(values))
+        
     # Use the Adem relations to fill in the rest
     #
     query = ("""insert into steenrod_products
@@ -143,7 +140,6 @@ def GenProductsSingletonLHS(con, grade):
               % {"grade" : grade})
     t0 = time.time()
     con.query(query)
-    print "   query 3 took %f secs" % (time.time() - t0)
 
     # Annoyingly, the rhs may be a product...
     #
@@ -168,21 +164,21 @@ def GenProductsSingletonLHS(con, grade):
                  join steenrod_products rhs_product
                    on rhs_product.lhs_grade = k
                   and rhs_product.lhs_id = k_square
-                  and rhs_grade = rhs.grade - rhs.leading_square
+                  and rhs_product.rhs_grade = rhs.grade - rhs.leading_square
                   and rhs_product.rhs_squares = rhs.trailing_squares
                   and not rhs_product.is_trivial
                  join steenrod_products
                    on i + j - k = steenrod_products.lhs_grade                          
                   and i_plus_j_minus_k_square = steenrod_products.lhs_id
                   and steenrod_products.rhs_id = rhs_product.prod_id
+                  and steenrod_products.rhs_grade = rhs_product.prod_grade
                  where lhs.trailing_squares = ''
                    and lhs.grade < %(grade)d
                    and rhs.leading_square > floor(lhs.grade / 2)
                    and rhs.grade = %(grade)d - lhs.grade"""
               % {"grade" : grade})
     t0 = time.time()
-    print con.query(query)
-    print "   query 4 took %f secs" % (time.time() - t0)
+    con.query(query)
          
             
 def GenProductsExtendLHSOnce(con, lhs_length, grade):

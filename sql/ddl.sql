@@ -9,6 +9,7 @@ create table if not exists serre_cartan_elts
     leading_square as (ascii(squares) << 8) | ascii(substring(squares, 2, 1)) persisted bigint unsigned,
     trailing_squares as substring(squares, 3) persisted blob,
     key(grade, id) using clustered columnstore,
+    unique key(id) unenforced norely,
     shard(id)
 );
 
@@ -56,6 +57,8 @@ create table if not exists steenrod_products
     prod_trailing_squares as substring(prod_squares, 3) persisted blob,
 
     is_trivial as prod_squares = concat(lhs_squares, rhs_squares) persisted tinyint,
+
+    unique key(lhs_id, rhs_id, prod_id) unenforced norely,
 
     key (lhs_grade, rhs_grade, lhs_id, rhs_id, prod_id) using clustered columnstore,
     shard(lhs_id)

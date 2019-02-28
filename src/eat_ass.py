@@ -140,12 +140,18 @@ def GenerateNewGenerators(con, grade, dimension):
 
 def E2ASSIteration(con, grade, dimension):
     Log("Doing iteration %d, %d" % (grade, dimension))
-    PopulateResolutionMatrix(con, grade, dimension)
-    triangularize.Triangularize(con, "resolution")
-    PopulateCyclesMatrixImage(con, dimension)
-    triangularize.Triangularize(con, "cycles")
-    GenerateNewGenerators(con, grade, dimension)
-    PopulateCyclesMatrixKernel(con, dimension)
+    with Timer("PopulateResolutionMatrix(%d,%d)" % (grade, dimension)):
+        PopulateResolutionMatrix(con, grade, dimension)
+    with Timer("Triangularize(resolution)(%d,%d)" % (grade, dimension)):
+        triangularize.Triangularize(con, "resolution")
+    with Timer("PopulateCyclesMatrixImage(%d,%d)" % (grade, dimension)):
+        PopulateCyclesMatrixImage(con, dimension)
+    with Timer("Triangularize(cycles)(%d,%d)" % (grade, dimension)):
+        triangularize.Triangularize(con, "cycles")
+    with Timer("GenerateNewGenerators(%d,%d)" % (grade, dimension)):
+        GenerateNewGenerators(con, grade, dimension)
+    with Timer("PopulateCyclesMatrixKernel(%d,%d)" % (grade, dimension)):
+        PopulateCyclesMatrixKernel(con, dimension)
     
 def ClearTables(con):
     con.query("delete from resolution_ids")
@@ -171,7 +177,8 @@ def PopulateDimensionZeroKernel(con, grade):
                    })
 
 def E2ASSGrade(con, grade):
-    steenrod_gen.GenForGrade(con, grade + 1)
+    with Timer("Steenrod gen in %d" % (grade + 1)):    
+        steenrod_gen.GenForGrade(con, grade + 1)
     PopulateDimensionZeroKernel(con, grade)
     for dimension in xrange(1, grade + 1):
         E2ASSIteration(con, grade, dimension)
@@ -183,3 +190,6 @@ def E2ASS(max_grade):
     for grade in xrange(1, max_grade):
         E2ASSGrade(con, grade)
 
+
+if __name__ == "__main__":
+    E2ASS(10000)
