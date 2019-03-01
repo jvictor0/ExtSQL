@@ -208,7 +208,7 @@ def E2ASSGrade(con, grade):
         steenrod_gen.GenForGrade(con, grade + 1)
     PopulateDimensionZeroKernel(con, grade)
     for dimension in xrange(1, grade + 1):
-        E2ASSIteration(con, grade, dimension, use_sp=True)
+        E2ASSIteration(con, grade, dimension, use_sp=not options.no_sp)
 
 def E2ASS(max_grade):
     con = ConnectToMemSQL()    

@@ -6,6 +6,7 @@ parser = optparse.OptionParser()
 parser.add_option("--host", type='string', default='127.0.0.1:10000')
 parser.add_option("--user", type='string', default='root')
 parser.add_option("--password", type='string', default=None)
+parser.add_option("--no-sp", default=False, action='store_true')
 options = parser.parse_args()[0]
 
 def Indent(string, amount=4, tail='\n'):
