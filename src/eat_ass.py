@@ -1,4 +1,5 @@
 from util import *
+import mr_sp
 import triangularize
 import steenrod_gen
 import os
@@ -138,8 +139,11 @@ def GenerateNewGenerators(con, grade, dimension):
     con.query("insert into resolution_ids(grade, dimension, from_col_ix) %s" % CollectNewGeneratorIdsQuery(grade, dimension))
     con.query("insert into resolution_generators(id, grade, dimension, differential_gen, differential_square) %s" % CollectNewGeneratorsQuery(grade, dimension))
 
-def E2ASSIteration(con, grade, dimension):
-    Log("Doing iteration %d, %d" % (grade, dimension))
+def E2ASSIteration(con, grade, dimension, use_sp=False):
+    if use_sp:
+        with Timer("E2ASSIteration(%d,%d)" % (grade, dimension)):
+            con.query("call e2_ass_iteration(%d,%d)" % (grade, dimension))
+            return
     with Timer("PopulateResolutionMatrix(%d,%d)" % (grade, dimension)):
         PopulateResolutionMatrix(con, grade, dimension)
     with Timer("Triangularize(resolution)(%d,%d)" % (grade, dimension)):
@@ -152,7 +156,30 @@ def E2ASSIteration(con, grade, dimension):
         GenerateNewGenerators(con, grade, dimension)
     with Timer("PopulateCyclesMatrixKernel(%d,%d)" % (grade, dimension)):
         PopulateCyclesMatrixKernel(con, dimension)
-    
+
+def E2ASSGenIterationStoredProc():
+    body = ["delete from resolution_matrix;",
+            "insert into resolution_matrix(col_ix, row_ix, leading_ix, iteration) %s;" % ResolutionDifferentialQuery("the_grade", "the_dimension"),
+            "insert into resolution_matrix(col_ix, row_ix, leading_ix, iteration) %s;" % ResolutionBasisQuery("the_grade", "the_dimension"),
+
+            "call triangularize_resolution();",
+            
+            "insert into cycles_matrix(col_ix, row_ix, leading_ix, iteration) %s;" % CollectImageQuery(),
+
+            "call triangularize_cycles();",
+            
+            "insert into resolution_ids(grade, dimension, from_col_ix) %s;" % CollectNewGeneratorIdsQuery("the_grade", "the_dimension"),
+            "insert into resolution_generators(id, grade, dimension, differential_gen, differential_square) %s;" % CollectNewGeneratorsQuery("the_grade", "the_dimension"),
+
+            "delete from cycles_matrix;",
+            "insert into cycles_matrix(col_ix, row_ix, leading_ix, iteration) %s;" % CollectKernelQuery()]
+    return mr_sp.StoredProc("e2_ass_iteration", ["the_grade bigint not null", "the_dimension bigint not null"], None, None, mr_sp.Body(body))
+
+def CreateE2ASSIterationStoredProc(con):
+    proc = E2ASSGenIterationStoredProc()
+    print proc.ToSQL()
+    con.query(proc.ToSQL())
+        
 def ClearTables(con):
     con.query("delete from resolution_ids")
     con.query("delete from resolution_generators")
@@ -181,12 +208,13 @@ def E2ASSGrade(con, grade):
         steenrod_gen.GenForGrade(con, grade + 1)
     PopulateDimensionZeroKernel(con, grade)
     for dimension in xrange(1, grade + 1):
-        E2ASSIteration(con, grade, dimension)
+        E2ASSIteration(con, grade, dimension, use_sp=True)
 
 def E2ASS(max_grade):
-    con = ConnectToMemSQL()
+    con = ConnectToMemSQL()    
     triangularize.CreateStoredProcs(con, "resolution")
     triangularize.CreateStoredProcs(con, "cycles")
+    CreateE2ASSIterationStoredProc(con)
     PopulateDimensionZeroGenerator(con)
     steenrod_gen.GenForGrade(con, 1)    
     for grade in xrange(1, max_grade):
