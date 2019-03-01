@@ -1,4 +1,5 @@
 from util import *
+import mr_sp
 
 def CreateTableQuery(namespace):
     return Dedent("""
@@ -66,9 +67,22 @@ def DoIteration(con, namespace, itr):
     con.query("insert into %(ns)s_matrix\n%(new_vectors)s" % {"ns":namespace, "new_vectors":NewVectorsQuery(namespace, itr)})
 
 
-def Triangularize(con, namespace, delete_old_iters=True):
+def DoneQuery(namespace, iteration):
+    return """select count(*) c from (
+                  select leading_ix from %(ns)s_matrix 
+                  where iteration = %(itr)s 
+                  group by leading_ix 
+                  having count(distinct leading_ix, col_ix) > 1) sub""" % {
+                      "ns":namespace,
+                      "itr":iteration
+                  }
+    
+def Triangularize(con, namespace, delete_old_iters=True, use_sp=False):
     if con is None:
         con = ConnectToMemSQL()
+    if use_sp:
+        con.query("call triangularize_%s()" % namespace)
+        return
     con.query("delete from %(ns)s_matrix where iteration > 0" % {"ns":namespace})
     iteration = 0
     need_to_continue = True
@@ -76,11 +90,8 @@ def Triangularize(con, namespace, delete_old_iters=True):
         DoIteration(con, namespace, iteration)
         SanityCheck(con, namespace)
         iteration += 1
-        rows = con.query("select leading_ix, count(distinct leading_ix, col_ix) c from %(ns)s_matrix where iteration = %(itr)s group by leading_ix" % {"ns":namespace, "itr":iteration})
-        need_to_continue = False
-        for r in rows:
-            if int(r["c"]) > 1:
-                need_to_continue = True
+        rows = con.query(DoneQuery(namespace, iteration))
+        need_to_continue = int(rows[0]['c']) > 0
     if delete_old_iters:
         con.query("delete from %(ns)s_matrix where iteration < %(iteration)s" % {
             "ns" : namespace,
@@ -125,3 +136,35 @@ def DbToLists(con, namespace, itr=0):
 def PrintLists(result):
     print "\n".join([" ".join(r) for r in result])
     
+def GenDoneProc(namespace):
+    return mr_sp.StoredProc(namespace + "_is_done",
+                            ["cur_itr bigint not null"],
+                            "tinyint not null",
+                            mr_sp.Declare(["q query(c tinyint) = %s;" % DoneQuery(namespace, "cur_itr")]),
+                            mr_sp.Body(["return scalar(q) = 0;"]))
+                            
+        
+def GenMainStoredProc(namespace, delete_old_iters=True):
+    result = mr_sp.StoredProc("triangularize_" + namespace,
+                              [],
+                              None,
+                              mr_sp.Declare(["cur_itr bigint not null = 0;",
+                                             "is_done tinyint not null = 0;"]),
+                              mr_sp.Body(["delete from %s_matrix where iteration > 0;" % namespace,
+                                          mr_sp.While("not is_done",
+                                                      ["insert into %(ns)s_matrix\n%(new_vectors)s;"
+                                                       % {"ns":namespace, "new_vectors":NewVectorsQuery(namespace, "cur_itr")},
+                                                       "cur_itr = cur_itr + 1;",
+                                                       "is_done = " + namespace + "_is_done(cur_itr);"])]))
+    if delete_old_iters:
+        result.body.body.append("delete from %s_matrix where iteration < cur_itr;" % namespace)
+    return result
+                                        
+def GenStoredProcs(namespace, delete_old_iters=True):
+    return [GenDoneProc(namespace), GenMainStoredProc(namespace, delete_old_iters)]
+
+def CreateStoredProcs(con, namespace, delete_old_iters=True):
+    for p in GenStoredProcs(namespace, delete_old_iters):
+        print p.ToSQL()
+        con.query(p.ToSQL())
+

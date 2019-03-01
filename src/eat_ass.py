@@ -143,11 +143,11 @@ def E2ASSIteration(con, grade, dimension):
     with Timer("PopulateResolutionMatrix(%d,%d)" % (grade, dimension)):
         PopulateResolutionMatrix(con, grade, dimension)
     with Timer("Triangularize(resolution)(%d,%d)" % (grade, dimension)):
-        triangularize.Triangularize(con, "resolution")
+        triangularize.Triangularize(con, "resolution", use_sp=True)
     with Timer("PopulateCyclesMatrixImage(%d,%d)" % (grade, dimension)):
         PopulateCyclesMatrixImage(con, dimension)
     with Timer("Triangularize(cycles)(%d,%d)" % (grade, dimension)):
-        triangularize.Triangularize(con, "cycles")
+        triangularize.Triangularize(con, "cycles", use_sp=True)
     with Timer("GenerateNewGenerators(%d,%d)" % (grade, dimension)):
         GenerateNewGenerators(con, grade, dimension)
     with Timer("PopulateCyclesMatrixKernel(%d,%d)" % (grade, dimension)):
@@ -185,6 +185,8 @@ def E2ASSGrade(con, grade):
 
 def E2ASS(max_grade):
     con = ConnectToMemSQL()
+    triangularize.CreateStoredProcs(con, "resolution")
+    triangularize.CreateStoredProcs(con, "cycles")
     PopulateDimensionZeroGenerator(con)
     steenrod_gen.GenForGrade(con, 1)    
     for grade in xrange(1, max_grade):

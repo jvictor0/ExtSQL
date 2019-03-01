@@ -8,10 +8,10 @@ parser.add_option("--user", type='string', default='root')
 parser.add_option("--password", type='string', default=None)
 options = parser.parse_args()[0]
 
-def Indent(string, amount=4):
+def Indent(string, amount=4, tail='\n'):
     string  = string.strip()
     string = "\n" + string
-    return string.replace("\n", "\n" + (" " * amount)) + "\n"
+    return string.replace("\n", "\n" + (" " * amount)) + tail
     
 def Dedent(string):
     amount = 0
