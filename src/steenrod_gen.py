@@ -26,7 +26,6 @@ def InsertEltsInGrade(con, grade):
     
 def GenSerreCartanBasis(con, grade):
     con.query("delete from serre_cartan_elts where grade >= %d" % grade)
-    print "generating basis in grade = %d" % grade
     InsertEltsInGrade(con, grade)
 
 def Choose(n,k):
@@ -39,7 +38,6 @@ def Choose(n,k):
         
 def GenBinomial(con, j):
     con.query("delete from nonzero_binomial_coefs where j >= %d" % j)
-    print "generating binomial coefs"
     rows = []
 
     ring_generators = {int(r["leading_square"]) : int(r["id"])
@@ -62,7 +60,6 @@ def GenProductsSingletonLHS(con, grade):
                        for r in con.query("select leading_square, id from serre_cartan_elts where length(squares) = 2")}
 
     
-    print "generating multiplication table in grade %d" % grade
     # Generate all trivial products, that is, all products that are obviously Serre-Cartan
     #
     query = ("""insert into steenrod_products 
@@ -215,7 +212,6 @@ def GenProductsExtendLHSOnce(con, lhs_length, grade):
 def GenProductsExtendLHS(con, grade):
     starting_length = 2
     while True:
-        print "Extending LHS to lenght %d" % starting_length
         result = GenProductsExtendLHSOnce(con, starting_length, grade)
         starting_length += 1
         if result == 0:

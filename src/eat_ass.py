@@ -147,11 +147,11 @@ def E2ASSIteration(con, grade, dimension, use_sp=False):
     with Timer("PopulateResolutionMatrix(%d,%d)" % (grade, dimension)):
         PopulateResolutionMatrix(con, grade, dimension)
     with Timer("Triangularize(resolution)(%d,%d)" % (grade, dimension)):
-        triangularize.Triangularize(con, "resolution", use_sp=True)
+        triangularize.Triangularize(con, "resolution", use_sp=False)
     with Timer("PopulateCyclesMatrixImage(%d,%d)" % (grade, dimension)):
         PopulateCyclesMatrixImage(con, dimension)
     with Timer("Triangularize(cycles)(%d,%d)" % (grade, dimension)):
-        triangularize.Triangularize(con, "cycles", use_sp=True)
+        triangularize.Triangularize(con, "cycles", use_sp=False)
     with Timer("GenerateNewGenerators(%d,%d)" % (grade, dimension)):
         GenerateNewGenerators(con, grade, dimension)
     with Timer("PopulateCyclesMatrixKernel(%d,%d)" % (grade, dimension)):
@@ -175,10 +175,17 @@ def E2ASSGenIterationStoredProc():
             "insert into cycles_matrix(col_ix, row_ix, leading_ix, iteration) %s;" % CollectKernelQuery()]
     return mr_sp.StoredProc("e2_ass_iteration", ["the_grade bigint not null", "the_dimension bigint not null"], None, None, mr_sp.Body(body))
 
-def CreateE2ASSIterationStoredProc(con):
-    proc = E2ASSGenIterationStoredProc()
-    print proc.ToSQL()
-    con.query(proc.ToSQL())
+def E2ASSGenGradeStoredProc():
+    body = mr_sp.Block("for the_dimension in 1 .. the_grade loop",
+                       ["call e2_ass_iteration(the_grade, the_dimension);"],
+                       "end loop;")
+    return mr_sp.StoredProc("e2_ass_grade", ["the_grade bigint not null"], None, None, mr_sp.Body([body]))
+
+def CreateE2ASSStoredProcs(con):
+    for proc in [E2ASSGenIterationStoredProc(), E2ASSGenGradeStoredProc()]:
+        print proc.ToSQL()
+        con.query(proc.ToSQL())
+        print
         
 def ClearTables(con):
     con.query("delete from resolution_ids")
@@ -203,22 +210,26 @@ def PopulateDimensionZeroKernel(con, grade):
                        "grade" : grade
                    })
 
-def E2ASSGrade(con, grade):
-    with Timer("Steenrod gen in %d" % (grade + 1)):    
+def E2ASSGrade(con, grade, use_sp=False):
+    with Timer("SteenrodGen(%d)" % (grade + 1)):    
         steenrod_gen.GenForGrade(con, grade + 1)
     PopulateDimensionZeroKernel(con, grade)
+    if use_sp:
+        with Timer("E2ASSGrade(%d)" % (grade)):
+            con.query("call e2_ass_grade(%d)" % grade)
+        return
     for dimension in xrange(1, grade + 1):
-        E2ASSIteration(con, grade, dimension, use_sp=not options.no_sp)
+        E2ASSIteration(con, grade, dimension, use_sp=False)
 
 def E2ASS(max_grade):
     con = ConnectToMemSQL()    
     triangularize.CreateStoredProcs(con, "resolution")
     triangularize.CreateStoredProcs(con, "cycles")
-    CreateE2ASSIterationStoredProc(con)
+    CreateE2ASSStoredProcs(con)
     PopulateDimensionZeroGenerator(con)
     steenrod_gen.GenForGrade(con, 1)    
     for grade in xrange(1, max_grade):
-        E2ASSGrade(con, grade)
+        E2ASSGrade(con, grade, use_sp=not options.no_sp)
 
 
 if __name__ == "__main__":
