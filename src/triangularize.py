@@ -14,28 +14,38 @@ def CreateTableQuery(namespace):
         )""" % {"ns": namespace})
 
 
-def PrePivotsQuery(namespace, itr):
+def ActiveColsQuery(namespace, itr):
     return Dedent("""
                      select
                          col_ix,
                          row_ix,
                          leading_ix,
-                         min(col_ix) over (partition by leading_ix) as min_col_ix
-                     from %(ns)s_matrix""" % {"ns":namespace, "itr":itr})
+                         pivot_col_ix
+                     from
+                     (
+                         select
+                             col_ix,
+                             row_ix,
+                             leading_ix,
+                             min(col_ix) over (partition by leading_ix) as pivot_col_ix,
+                             count(*) over (partition by leading_ix) as num_elts_in_group,
+                             count(*) over (partition by leading_ix, col_ix) as num_elts_in_col
+                         from %(ns)s_matrix
+                     ) sub
+                     where num_elts_in_group != num_elts_in_col""" % {"ns":namespace, "itr":itr})
 
-def PivotsQuery(namespace, itr):
+def PivotsQueryUnderCTE(namespace, itr):
     return Dedent("""
                      select
-                        pre_pivots.col_ix,
-                        cols.col_ix as target_col_ix,
-                        pre_pivots.row_ix,
-                        pre_pivots.leading_ix
+                        cols.col_ix as col_ix,
+                        active_cols.row_ix,
+                        active_cols.leading_ix
                      from 
-                     (%(pre_pivots)s) pre_pivots
+                     active_cols
                      join (select distinct leading_ix, col_ix from %(ns)s_matrix) cols
-                     on pre_pivots.leading_ix = cols.leading_ix 
-                     where min_col_ix = pre_pivots.col_ix""" % {
-                         "pre_pivots":Indent(PrePivotsQuery(namespace, itr)),
+                     on active_cols.leading_ix = cols.leading_ix 
+                        and active_cols.col_ix != cols.col_ix
+                     where pivot_col_ix = active_cols.col_ix""" % {
                          "ns":namespace,
                          "itr":itr})
 
@@ -60,30 +70,44 @@ def DeleteNonPivotsQuery(namespace, itr):
                        "itr":itr})
 
 
-def NewVectorsQuery(namespace, itr):
+def NewVectorsQueryUnderCTE(namespace, itr):
     return Dedent("""
-                    select
-                         coalesce(matrix.col_ix, pivots.target_col_ix) as col_ix,
-                         coalesce(matrix.row_ix, pivots.row_ix) as row_ix,
-                         min(coalesce(matrix.row_ix, pivots.row_ix)) over (partition by coalesce(matrix.col_ix, pivots.target_col_ix)) as leading_ix,
-                         %(itr)s + 1 as iteration
-                    from
-                    (%(pivots)s) pivots
-                    full outer join %(ns)s_matrix matrix
-                    on matrix.row_ix = pivots.row_ix
-                       and matrix.leading_ix = pivots.leading_ix
-                       and matrix.col_ix = pivots.target_col_ix
-                    where matrix.col_ix is null 
-                       or pivots.target_col_ix is null""" % {
-                          "ns": namespace,
-                          "itr" : itr,
-                          "pivots" : Indent(PivotsQuery(namespace, itr))
-                      })
-                  
+                  select
+                      col_ix,
+                      row_ix,
+                      min(row_ix) over (partition by leading_ix, col_ix) as leading_ix,
+                      %(itr)s + 1 as iteration
+                  from
+                  (
+                     %(pivots)s
+                     union all
+                     select 
+                        col_ix,
+                        row_ix,
+                        leading_ix 
+                     from active_cols 
+                     where pivot_col_ix != col_ix
+                  ) sub
+                  group by row_ix, col_ix, leading_ix
+                  having count(*) %% 2 = 1
+                  """ % {
+                      "pivots": Indent(PivotsQueryUnderCTE(namespace, itr)),
+                      "itr": itr
+                  })
+
+def InsertNewVectorsQuery(namespace, itr):
+    return Dedent("""
+                    with active_cols as (%(active_cols)s)
+                    insert into %(ns)s_matrix
+                    %(new_vectors)s""" % {
+                        "ns":namespace,
+                        "new_vectors":NewVectorsQueryUnderCTE(namespace, itr),
+                        "active_cols": Indent(ActiveColsQuery(namespace, itr))})
+
 def DoIteration(con, namespace, itr):
     if con is None:
         con = ConnectToMemSQL()
-    con.query("insert into %(ns)s_matrix\n%(new_vectors)s" % {"ns":namespace, "new_vectors":NewVectorsQuery(namespace, itr)})
+    con.query(InsertNewVectorsQuery(namespace, itr))
     con.query(DeleteNonPivotsQuery(namespace, itr))
 
 
@@ -168,8 +192,7 @@ def GenMainStoredProc(namespace):
                                              "is_done tinyint not null = 0;"]),
                               mr_sp.Body(["delete from %s_matrix where iteration > 0;" % namespace,
                                           mr_sp.While("not is_done",
-                                                      ["insert into %(ns)s_matrix\n%(new_vectors)s;"
-                                                       % {"ns":namespace, "new_vectors":NewVectorsQuery(namespace, "cur_itr")},
+                                                      [InsertNewVectorsQuery(namespace, "cur_itr") + ";",
                                                        DeleteNonPivotsQuery(namespace, "cur_itr") + ";",
                                                        "cur_itr = cur_itr + 1;",
                                                        "is_done = " + namespace + "_is_done(cur_itr);"])]))
