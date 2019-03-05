@@ -114,7 +114,6 @@ def DoIteration(con, namespace, itr):
 def DoneQuery(namespace, iteration):
     return """select count(*) c from (
                   select leading_ix from %(ns)s_matrix 
-                  where iteration = %(itr)s 
                   group by leading_ix 
                   having count(distinct leading_ix, col_ix) > 1) sub""" % {
                       "ns":namespace,
