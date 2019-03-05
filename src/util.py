@@ -1,4 +1,4 @@
-from memsql import joyo_utils
+import database
 import optparse
 import time
 
@@ -23,7 +23,7 @@ def Dedent(string):
     return string.strip().replace("\n" + (" " * amount), "\n")
 
 def ConnectToMemSQL(use_db=True):
-    return joyo_utils.ConnectToMemSQL(options.host, database="ext_sql" if use_db else "", password=options.password, user=options.user)
+    return database.Connection(options.host, database="ext_sql" if use_db else "", password=options.password, user=options.user)
 
 def Log(msg):
     print msg
