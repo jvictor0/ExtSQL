@@ -212,7 +212,7 @@ def PopulateDimensionZeroKernel(con, grade):
 
 def E2ASSGrade(con, grade, use_sp=False):
     with Timer("SteenrodGen(%d)" % (grade + 1)):    
-        steenrod_gen.GenForGrade(con, grade + 1)
+        steenrod_gen.GenForGrade(con, grade + 1, use_sp=use_sp)
     PopulateDimensionZeroKernel(con, grade)
     if use_sp:
         with Timer("E2ASSGrade(%d)" % (grade)):
@@ -226,8 +226,9 @@ def E2ASS(max_grade):
     triangularize.CreateStoredProcs(con, "resolution")
     triangularize.CreateStoredProcs(con, "cycles")
     CreateE2ASSStoredProcs(con)
+    steenrod_gen.CreateStoredProcs(con)
     PopulateDimensionZeroGenerator(con)
-    steenrod_gen.GenForGrade(con, 1)    
+    steenrod_gen.GenForGrade(con, 1, use_sp=not options.no_sp)    
     for grade in xrange(1, max_grade):
         E2ASSGrade(con, grade, use_sp=not options.no_sp)
 

@@ -12,7 +12,7 @@ class Block(object):
         self.footer = footer
 
     def ToSQL(self):
-        result = self.header
+        result = self.header + "\n"
         for b in self.body:
             result += util.Indent(ToSQL(b))
         if self.footer is not None:
