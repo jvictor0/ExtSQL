@@ -14,7 +14,7 @@ def CreateTableQuery(namespace):
         )""" % {"ns": namespace})
 
 
-def ActiveColsQuery(namespace, itr):
+def ActiveColsQuery(namespace, itr, min_leading_ix):
     return Dedent("""
                      select
                          col_ix,
@@ -31,10 +31,15 @@ def ActiveColsQuery(namespace, itr):
                              count(*) over (partition by leading_ix) as num_elts_in_group,
                              count(*) over (partition by leading_ix, col_ix) as num_elts_in_col
                          from %(ns)s_matrix
+                         where leading_ix >= %(min_leading_ix)s
                      ) sub
-                     where num_elts_in_group != num_elts_in_col""" % {"ns":namespace, "itr":itr})
+                     where num_elts_in_group != num_elts_in_col""" % {
+                         "ns":namespace,
+                         "itr":itr,
+                         "min_leading_ix": min_leading_ix
+                     })
 
-def PivotsQueryUnderCTE(namespace, itr):
+def PivotsQueryUnderCTE(namespace, itr, min_leading_ix):
     return Dedent("""
                      select
                         cols.col_ix as col_ix,
@@ -42,14 +47,16 @@ def PivotsQueryUnderCTE(namespace, itr):
                         active_cols.leading_ix
                      from 
                      active_cols
-                     join (select distinct leading_ix, col_ix from %(ns)s_matrix) cols
+                     join (select distinct leading_ix, col_ix from %(ns)s_matrix where leading_ix >= %(min_leading_ix)s) cols
                      on active_cols.leading_ix = cols.leading_ix 
                         and active_cols.col_ix != cols.col_ix
                      where pivot_col_ix = active_cols.col_ix""" % {
-                         "ns":namespace,
-                         "itr":itr})
+                         "ns" : namespace,
+                         "itr" : itr,
+                         "min_leading_ix" : min_leading_ix
+                     })
 
-def DeleteNonPivotsQuery(namespace, itr):
+def DeleteNonPivotsQuery(namespace, itr, min_leading_ix):
     return Dedent("""
                    delete %(ns)s_matrix 
                    from %(ns)s_matrix 
@@ -59,18 +66,21 @@ def DeleteNonPivotsQuery(namespace, itr):
                              leading_ix,
                              min(col_ix) piv_col
                          from %(ns)s_matrix 
-                         where iteration <= %(itr)s
+                         where leading_ix >= %(min_leading_ix)s
+                           and iteration <= %(itr)s
                          group by leading_ix
                    ) piv_cols
                    on piv_cols.leading_ix = %(ns)s_matrix.leading_ix
                       and %(ns)s_matrix.col_ix = piv_cols.piv_col
                    where piv_cols.piv_col is null
                       and %(ns)s_matrix.iteration <= %(itr)s""" % {
-                       "ns":namespace,
-                       "itr":itr})
+                          "ns" : namespace,
+                          "itr" : itr,
+                          "min_leading_ix" : min_leading_ix
+                      })
 
 
-def NewVectorsQueryUnderCTE(namespace, itr):
+def NewVectorsQueryUnderCTE(namespace, itr, min_leading_ix):
     return Dedent("""
                   select
                       col_ix,
@@ -91,33 +101,35 @@ def NewVectorsQueryUnderCTE(namespace, itr):
                   group by row_ix, col_ix, leading_ix
                   having count(*) %% 2 = 1
                   """ % {
-                      "pivots": Indent(PivotsQueryUnderCTE(namespace, itr)),
+                      "pivots": Indent(PivotsQueryUnderCTE(namespace, itr, min_leading_ix)),
                       "itr": itr
                   })
 
-def InsertNewVectorsQuery(namespace, itr):
+def InsertNewVectorsQuery(namespace, itr, min_leading_ix):
     return Dedent("""
                     with active_cols as (%(active_cols)s)
                     insert into %(ns)s_matrix
                     %(new_vectors)s""" % {
                         "ns":namespace,
-                        "new_vectors":NewVectorsQueryUnderCTE(namespace, itr),
-                        "active_cols": Indent(ActiveColsQuery(namespace, itr))})
+                        "new_vectors":NewVectorsQueryUnderCTE(namespace, itr, min_leading_ix),
+                        "active_cols": Indent(ActiveColsQuery(namespace, itr, min_leading_ix))})
 
-def DoIteration(con, namespace, itr):
+def DoIteration(con, namespace, itr, min_leading_ix):
     if con is None:
         con = ConnectToMemSQL()
-    con.query(InsertNewVectorsQuery(namespace, itr))
-    con.query(DeleteNonPivotsQuery(namespace, itr))
+    con.query(InsertNewVectorsQuery(namespace, itr, min_leading_ix))
+    con.query(DeleteNonPivotsQuery(namespace, itr, min_leading_ix))
 
 
-def DoneQuery(namespace, iteration):
-    return """select count(*) c from (
-                  select leading_ix from %(ns)s_matrix 
+def DoneQuery(namespace, iteration, min_leading_ix):
+    return """select min(leading_ix) c from (
+                  select leading_ix from %(ns)s_matrix
+                  where leading_ix >= %(min_leading_ix)s
                   group by leading_ix 
                   having count(distinct leading_ix, col_ix) > 1) sub""" % {
                       "ns":namespace,
-                      "itr":iteration
+                      "itr":iteration,
+                      "min_leading_ix" : min_leading_ix
                   }
     
 def Triangularize(con, namespace, use_sp=False):
@@ -129,12 +141,15 @@ def Triangularize(con, namespace, use_sp=False):
     con.query("delete from %(ns)s_matrix where iteration > 0" % {"ns":namespace})
     iteration = 0
     need_to_continue = True
+    min_leading_ix = 0
     while need_to_continue:
-        DoIteration(con, namespace, iteration)
+        DoIteration(con, namespace, iteration, min_leading_ix)
         SanityCheck(con, namespace)
         iteration += 1
-        rows = con.query(DoneQuery(namespace, iteration))
-        need_to_continue = int(rows[0]['c']) > 0
+        rows = con.query(DoneQuery(namespace, iteration, min_leading_ix))
+        need_to_continue = rows[0]['c'] is not None
+        if need_to_continue:
+            min_leading_ix = int(rows[0]['c'])
 
 def SanityCheck(con, namespace):
     assert len(con.query("select * from %(ns)s_matrix group by iteration, row_ix, col_ix having count(*) > 1" % {"ns" : namespace})) == 0
@@ -177,10 +192,11 @@ def PrintLists(result):
     
 def GenDoneProc(namespace):
     return mr_sp.StoredProc(namespace + "_is_done",
-                            ["cur_itr bigint not null"],
-                            "tinyint not null",
-                            mr_sp.Declare(["q query(c tinyint) = %s;" % DoneQuery(namespace, "cur_itr")]),
-                            mr_sp.Body(["return scalar(q) = 0;"]))
+                            ["cur_itr bigint not null",
+                             "min_leading_ix bigint not null"],
+                            "bigint",
+                            mr_sp.Declare(["q query(c tinyint) = %s;" % DoneQuery(namespace, "cur_itr", "min_leading_ix")]),
+                            mr_sp.Body(["return scalar(q);"]))
                             
         
 def GenMainStoredProc(namespace):
@@ -188,13 +204,17 @@ def GenMainStoredProc(namespace):
                               [],
                               None,
                               mr_sp.Declare(["cur_itr bigint not null = 0;",
-                                             "is_done tinyint not null = 0;"]),
+                                             "is_done bigint = 0;",
+                                             "min_leading_ix bigint not null = 0;"]),
                               mr_sp.Body(["delete from %s_matrix where iteration > 0;" % namespace,
-                                          mr_sp.While("not is_done",
-                                                      [InsertNewVectorsQuery(namespace, "cur_itr") + ";",
-                                                       DeleteNonPivotsQuery(namespace, "cur_itr") + ";",
-                                                       "cur_itr = cur_itr + 1;",
-                                                       "is_done = " + namespace + "_is_done(cur_itr);"])]))
+                                          mr_sp.While("is_done is not null",
+                                                      [
+                                                          "min_leading_ix = is_done;",
+                                                          InsertNewVectorsQuery(namespace, "cur_itr", "min_leading_ix") + ";",
+                                                          DeleteNonPivotsQuery(namespace, "cur_itr", "min_leading_ix") + ";",
+                                                          "cur_itr = cur_itr + 1;",
+                                                          "is_done = " + namespace + "_is_done(cur_itr, min_leading_ix);"
+                                                      ])]))
     return result
                                         
 def GenStoredProcs(namespace):

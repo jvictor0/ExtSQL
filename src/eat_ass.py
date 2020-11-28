@@ -222,7 +222,8 @@ def E2ASSGrade(con, grade, use_sp=False):
         E2ASSIteration(con, grade, dimension, use_sp=False)
 
 def E2ASS(max_grade):
-    con = ConnectToMemSQL()    
+    con = ConnectToMemSQL()
+    con.query("set session materialize_ctes='auto'")
     triangularize.CreateStoredProcs(con, "resolution")
     triangularize.CreateStoredProcs(con, "cycles")
     CreateE2ASSStoredProcs(con)
