@@ -66,6 +66,11 @@ create table if not exists steenrod_products
     shard(rhs_id)
 );
 
+create table if not exists steenrods_computed
+(
+    grade bigint primary key
+);
+
 create table if not exists resolution_ids
 (
     id bigint unsigned auto_increment not null,

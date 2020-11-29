@@ -76,21 +76,20 @@ def SteenrodDoubleProductsForGradeStoredProc():
 
 def CreateStoredProcs(con):
     proc = SteenrodDoubleProductsForGradeStoredProc()
-    print proc.ToSQL()
     con.query(proc.ToSQL())
 
 def SteenrodDoubleProductsForGrade(con, grade, use_sp=False):
     if use_sp:
         con.query("call steenrod_double_products(%d)" % grade)
-        return
-    binoms = con.query(BinomialsForGradeQuery(grade))
-    times = []
-    for b in binoms:
-        t0 = time.time()
-        con.query(SteenrodDoubleProductsQuery(grade, int(b["i_j_sum"])))
-        times.append(time.time() - t0)
-    if len(times) > 0:
-        print "Double Products total = %f, avg = %f" % (sum(times), sum(times) / len(times))
+    else:
+        binoms = con.query(BinomialsForGradeQuery(grade))
+        times = []
+        for b in binoms:
+            t0 = time.time()
+            con.query(SteenrodDoubleProductsQuery(grade, int(b["i_j_sum"])))
+            times.append(time.time() - t0)
+        if len(times) > 0:
+            print "[STEENROD GEN] Double Products grade = %d total = %f, avg = %f" % (grade, sum(times), sum(times) / len(times))
 
 def TwoByteHex(num):
     if num < 256:
@@ -142,7 +141,7 @@ def GenBinomial(con, j):
     if len(rows) > 0:
         con.query("insert into nonzero_binomial_coefs(i,j,k,i_plus_j_minus_k_square,i_square,k_square) values " + ",".join([str(t) for t in rows]))
 
-def GenProductsSingletonLHS(con, grade, use_sp=False):
+def GenProductsSingletonLHS(con, grade, use_sp=True):
     con.query("delete from steenrod_products where prod_grade >= %d" % grade)
 
     # Grab all ring generators (that is, products of length one) from the serre cartan table
@@ -177,7 +176,6 @@ def GenProductsSingletonLHS(con, grade, use_sp=False):
                     and prod.grade = %(grade)d
                     and rhs.leading_square <= floor(lhs.grade / 2)"""
               % {"grade" : grade})
-    t0 = time.time()
     con.query(query)
 
     values = []
@@ -226,7 +224,6 @@ def GenProductsSingletonLHS(con, grade, use_sp=False):
                    and rhs.leading_square > floor(lhs.grade / 2)
                    and rhs.grade = %(grade)d - lhs.grade"""
               % {"grade" : grade})
-    t0 = time.time()
     con.query(query)
 
     # Annoyingly, the rhs may be a product...
@@ -276,20 +273,53 @@ def GenProductsExtendLHS(con, grade):
 # The invariant this upholds is that when its over, we have all products up to grade
 # Thus we need to generate twice as many singleton products so we can generate the longer products
 #
-def GenForGrade(con, grade, use_sp=False):
+def GenForGrade(con, grade, use_sp=True):
+    print "[STEENROD GEN] Generating grade", grade
+    t0 = time.time()
+
     con.query("analyze table serre_cartan_elts")
     con.query("analyze table steenrod_products")
+    con.query("delete from steenrods_computed where grade >= %d" % grade)
+
+    print "[STEENROD GEN] Starting after %f secs" % (time.time() - t0)
+    t1 = time.time()
+
+    con.query("begin")    
     for i in xrange(4):
         GenSerreCartanBasis(con, 4 * grade - 3 + i)
+
+    print "[STEENROD GEN] Generated basis elts in %f secs, total %f secs" % (time.time() - t1, time.time() - t0)
+    t1 = time.time()
+
     GenBinomial(con, 2 * grade - 1)
     GenBinomial(con, 2 * grade)
+
+    print "[STEENROD GEN] Generated binomial coefs in %f secs, total %f secs" % (time.time() - t1, time.time() - t0)
+    t1 = time.time()
+
     GenProductsSingletonLHS(con, 2 * grade - 1, use_sp=use_sp)
     GenProductsSingletonLHS(con, 2 * grade, use_sp=use_sp)
+
+    print "[STEENROD GEN] Generated singleton lhs products in %f secs, total %f secs" % (time.time() - t1, time.time() - t0)
+    t1 = time.time()
+
     GenProductsExtendLHS(con, grade)
-        
-def GenAll(max_grade):
+
+    print "[STEENROD GEN] Generated extended LHS products in %f secs, total %f secs" % (time.time() - t1, time.time() - t0)
+    
+    con.query("commit")
+    con.query("insert into steenrods_computed values(%d)" % grade)
+
+    print "[STEENROD GEN] Grade %d, total %f secs" % (grade, time.time() - t0)
+    
+def GenAll(max_grade=None):
     con = ConnectToMemSQL()
-    for grade in xrange(1, max_grade + 1):
+    CreateStoredProcs(con)
+    start_grade = int(con.query("select ifnull(max(grade), 0) + 1 m from steenrods_computed")[0]['m'])
+    print "[STEENROD GEN] starting grade", start_grade
+    if max_grade is None:
+        max_grade = 2**32
+    for grade in xrange(start_grade, max_grade + 1):
         GenForGrade(con, grade)
         
 def MultToy(sq1, sq2):
@@ -300,3 +330,5 @@ def MultToy(sq1, sq2):
                      % (",".join(map(TwoByteHex, sq1)), ",".join(map(TwoByteHex, sq2))))
     return [SquareFromBlob(r["prod_squares"]) for r in rows]
 
+if __name__ == "__main__":
+    GenAll()
