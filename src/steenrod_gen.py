@@ -9,7 +9,7 @@ import time
 # steenrod_products.lhs = Sq^{i + j - k}
 # steenrod_products.rhs = rhs_product = Sq^k * rhs_trailing_squares
 # 
-def SteenrodDoubleProductsQuery(prod_grade, i_j_sum):
+def SteenrodDoubleProductsQuery(prod_grade):
     query = ("""
                  insert into steenrod_products
                  (lhs_id, lhs_squares, lhs_grade,
@@ -34,62 +34,23 @@ def SteenrodDoubleProductsQuery(prod_grade, i_j_sum):
                   and rhs_product.rhs_id = rhs.trailing_squares_id
                   and not rhs_product.is_trivial
                  join steenrod_products
-                   on steenrod_products.lhs_grade = %(i_j_sum)s - k 
+                   on steenrod_products.lhs_grade = i + j - k 
                   and i_plus_j_minus_k_square = steenrod_products.lhs_id
                   and steenrod_products.rhs_id = rhs_product.prod_id
-                  and steenrod_products.rhs_grade = k + %(grade)s - %(i_j_sum)s /* this is rhs_product.prod_grade */                  
-                 where i + j = %(i_j_sum)s
+                  and steenrod_products.rhs_grade = k + %(grade)s - i - j /* this is rhs_product.prod_grade */                  
+                 where i + j < %(grade)s
                    and k > 0
-                   and rhs_product.rhs_grade = %(grade)s - %(i_j_sum)s /* this is rhs.grade - rhs.leading_grade */
+                   and rhs_product.rhs_grade = %(grade)s - i - j /* this is rhs.grade - rhs.leading_grade */
                    and steenrod_products.prod_grade = %(grade)s
-                   and steenrod_products.lhs_grade < %(i_j_sum)s /* lhs_grade = i + j - k > i + j */
-                   and steenrod_products.rhs_grade > %(grade)s - %(i_j_sum)s /* rhs_grade = k + grade - i - j < grade - i - j */
+                   and steenrod_products.lhs_grade = i + j - k /* lhs_grade = i + j - k */
+                   and steenrod_products.rhs_grade = k + %(grade)s - i - j /* rhs_grade = k + grade - i - j */
                    and steenrod_products.lhs_trailing_squares = '' /* this is superfluous, but might be better early filtering */
                    and rhs_product.lhs_trailing_squares = '' /* this is superfluous, but might be better early filtering */ """
-              % {"grade" : prod_grade,
-                 "i_j_sum" : i_j_sum})
+              % {"grade" : prod_grade})
     return Dedent(query)
 
-def BinomialsForGradeQuery(grade):
-    return Dedent("""
-                  select 
-                      distinct i + j as i_j_sum
-                  from nonzero_binomial_coefs 
-                  where i + j < %(grade)s
-                    and k > 0""" % {
-        "grade" : grade
-        })
-
-def SteenrodDoubleProductsForGradeStoredProc():
-    return mr_sp.StoredProc(
-        "steenrod_double_products",
-        ["the_grade bigint not null"],
-        None,
-        mr_sp.Declare(["arr array(record(i_j_sum bigint not null));",
-                       "binoms query(i_j_sum bigint not null) = %s;" % Indent(BinomialsForGradeQuery("the_grade")),
-                       "_i_j_sum bigint not null;"]),
-        mr_sp.Body(["arr = collect(binoms);",
-                    mr_sp.Block("for rec in arr loop",
-                                ["_i_j_sum = rec.i_j_sum;",
-                                 SteenrodDoubleProductsQuery("the_grade", "_i_j_sum") + ";"],
-                                "end loop;")]))
-
-def CreateStoredProcs(con):
-    proc = SteenrodDoubleProductsForGradeStoredProc()
-    con.query(proc.ToSQL())
-
-def SteenrodDoubleProductsForGrade(con, grade, use_sp=False):
-    if use_sp:
-        con.query("call steenrod_double_products(%d)" % grade)
-    else:
-        binoms = con.query(BinomialsForGradeQuery(grade))
-        times = []
-        for b in binoms:
-            t0 = time.time()
-            con.query(SteenrodDoubleProductsQuery(grade, int(b["i_j_sum"])))
-            times.append(time.time() - t0)
-        if len(times) > 0:
-            print "[STEENROD GEN] Double Products grade = %d total = %f, avg = %f" % (grade, sum(times), sum(times) / len(times))
+def SteenrodDoubleProductsForGrade(con, grade):
+    con.query(SteenrodDoubleProductsQuery(grade))
 
 def TwoByteHex(num):
     if num < 256:
@@ -141,7 +102,7 @@ def GenBinomial(con, j):
     if len(rows) > 0:
         con.query("insert into nonzero_binomial_coefs(i,j,k,i_plus_j_minus_k_square,i_square,k_square) values " + ",".join([str(t) for t in rows]))
 
-def GenProductsSingletonLHS(con, grade, use_sp=True):
+def GenProductsSingletonLHS(con, grade):
     con.query("delete from steenrod_products where prod_grade >= %d" % grade)
 
     # Grab all ring generators (that is, products of length one) from the serre cartan table
@@ -228,7 +189,7 @@ def GenProductsSingletonLHS(con, grade, use_sp=True):
 
     # Annoyingly, the rhs may be a product...
     #
-    SteenrodDoubleProductsForGrade(con, grade, use_sp=use_sp)
+    SteenrodDoubleProductsForGrade(con, grade)
          
             
 def GenProductsExtendLHSOnce(con, lhs_length, grade):
@@ -273,12 +234,10 @@ def GenProductsExtendLHS(con, grade):
 # The invariant this upholds is that when its over, we have all products up to grade
 # Thus we need to generate twice as many singleton products so we can generate the longer products
 #
-def GenForGrade(con, grade, use_sp=True):
+def GenForGrade(con, grade):
     print "[STEENROD GEN] Generating grade", grade
     t0 = time.time()
 
-    con.query("analyze table serre_cartan_elts")
-    con.query("analyze table steenrod_products")
     con.query("delete from steenrods_computed where grade >= %d" % grade)
 
     print "[STEENROD GEN] Starting after %f secs" % (time.time() - t0)
@@ -297,8 +256,8 @@ def GenForGrade(con, grade, use_sp=True):
     print "[STEENROD GEN] Generated binomial coefs in %f secs, total %f secs" % (time.time() - t1, time.time() - t0)
     t1 = time.time()
 
-    GenProductsSingletonLHS(con, 2 * grade - 1, use_sp=use_sp)
-    GenProductsSingletonLHS(con, 2 * grade, use_sp=use_sp)
+    GenProductsSingletonLHS(con, 2 * grade - 1)
+    GenProductsSingletonLHS(con, 2 * grade)
 
     print "[STEENROD GEN] Generated singleton lhs products in %f secs, total %f secs" % (time.time() - t1, time.time() - t0)
     t1 = time.time()
@@ -314,7 +273,6 @@ def GenForGrade(con, grade, use_sp=True):
     
 def GenAll(max_grade=None):
     con = ConnectToMemSQL()
-    CreateStoredProcs(con)
     start_grade = int(con.query("select ifnull(max(grade), 0) + 1 m from steenrods_computed")[0]['m'])
     print "[STEENROD GEN] starting grade", start_grade
     if max_grade is None:
